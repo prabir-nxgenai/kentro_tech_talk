@@ -263,18 +263,19 @@ if MODE == "test":
             learning_rate=2e-4,
             fp16=not is_bfloat16_supported(),
             bf16=is_bfloat16_supported(),
-            logging_steps=10,
+            logging_steps=1000,  # Reduced logging frequency to minimize disk I/O
             optim="adamw_8bit",
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=3407,
-            output_dir="outputs",
+            output_dir="/tmp/outputs",  # Use temp directory instead of project dir
             save_strategy="no",
             packing=True,
             packing_strategy="bfd",
             use_cpu=False,
             gradient_checkpointing_kwargs={"use_reentrant": False},
-            report_to=[],
+            report_to=[],  # No external reporting (no TensorBoard, W&B, etc.)
+            disable_tqdm=False,  # Keep terminal progress bar instead of file logging
         ),
     )
     print("Loaded TEST configuration (10 steps, ~4-5 minutes)\n")
@@ -289,18 +290,19 @@ else:
             learning_rate=1e-4,
             fp16=not is_bfloat16_supported(),
             bf16=is_bfloat16_supported(),
-            logging_steps=25,
+            logging_steps=100,  # Reduced logging frequency to minimize disk I/O
             optim="adamw_8bit",
             weight_decay=0.01,
             lr_scheduler_type="cosine",
             seed=3407,
-            output_dir="outputs",
+            output_dir="/tmp/outputs",  # Use temp directory instead of project dir
             save_strategy="no",
             packing=True,
             packing_strategy="bfd",
             use_cpu=False,
             gradient_checkpointing_kwargs={"use_reentrant": False},
-            report_to=[],
+            report_to=[],  # No external reporting (no TensorBoard, W&B, etc.)
+            disable_tqdm=False,  # Keep terminal progress bar instead of file logging
         ),
     )
     print("Loaded PRODUCTION configuration (3 epochs, ~2-4 hours)\n")
@@ -366,7 +368,7 @@ else:
 # Step 10: Save Fine-Tuned Model
 # =============================================================================
 
-new_model_local = "DeepSeek-R1-Medical-FT-8b-16bts"
+new_model_local = "DeepSeek-R1-Medical-FT-8b-16bts-v2"
 
 print(f"Saving LoRA adapters to: {new_model_local}")
 model.save_pretrained(new_model_local)

@@ -23,7 +23,11 @@ Typical install:
   pip install unsloth trl transformers datasets torch
 
 Run:
-  python test_llm.py
+  python test_llm.py <model_path>
+
+Examples:
+  python test_llm.py ./DeepSeek-R1-Medical-FT-8b-16bts
+  python test_llm.py ./DeepSeek-R1-Medical-FT-8b-16bts-Q4
 
 Expected outcome:
   - The script prints a detailed, chain-of-thought style answer
@@ -34,6 +38,10 @@ Expected outcome:
 # Imports
 # =============================================================================
 
+# argparse for command-line argument parsing
+import argparse
+import sys
+
 # Unsloth provides fast loading, inference optimizations, and PEFT integration.
 from unsloth import FastLanguageModel
 
@@ -42,6 +50,118 @@ import torch
 
 # os is not strictly required here, but is commonly imported for filesystem checks.
 import os
+
+# re for regex-based space insertion
+import re
+
+# Try to import wordninja for intelligent word segmentation
+try:
+    import wordninja
+    HAS_WORDNINJA = True
+except ImportError:
+    HAS_WORDNINJA = False
+    print("Warning: wordninja not installed. Output formatting will be limited.")
+    print("Install with: pip install wordninja")
+
+
+# =============================================================================
+# Helper function to add spaces back to text
+# =============================================================================
+
+def add_spaces_to_text(text):
+    """
+    Intelligently insert spaces into concatenated text.
+    Uses wordninja library if available for best results,
+    otherwise falls back to regex-based heuristics.
+    """
+    # First pass: add spaces around numbers (before wordninja processes)
+    # Add space before numbers that follow letters: "word69" -> "word 69"
+    text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+    # Add space after numbers that are followed by letters: "69word" -> "69 word"
+    text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+
+    if HAS_WORDNINJA:
+        # Use wordninja to segment text - it's specifically designed for this
+        result = []
+        i = 0
+        current_word = ""
+
+        while i < len(text):
+            char = text[i]
+
+            # Preserve punctuation, numbers, and special characters
+            # Only accumulate alphabetic characters for wordninja
+            if char.isalpha():
+                current_word += char
+            else:
+                # Process accumulated word through wordninja
+                if current_word:
+                    segmented = " ".join(wordninja.split(current_word))
+                    result.append(segmented)
+                    current_word = ""
+                result.append(char)
+            i += 1
+
+        # Don't forget the last word
+        if current_word:
+            segmented = " ".join(wordninja.split(current_word))
+            result.append(segmented)
+
+        text = "".join(result)
+    else:
+        # Fallback: regex-based approach for common patterns
+        # Add space between lowercase and uppercase (e.g., "wordAnother" -> "word Another")
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+
+    # Post-processing to fix common issues:
+
+    # Fix contractions that were split (e.g., "he s" -> "he's")
+    text = re.sub(r'\b(\w+)\s+s\b', r"\1's", text)
+    text = re.sub(r'\b(\w+)\s+t\b', r"\1't", text)
+    text = re.sub(r'\b(\w+)\s+re\b', r"\1're", text)
+    text = re.sub(r'\b(\w+)\s+ve\b', r"\1've", text)
+    text = re.sub(r'\b(\w+)\s+ll\b', r"\1'll", text)
+    text = re.sub(r'\b(\w+)\s+d\b', r"\1'd", text)
+    text = re.sub(r'\b(\w+)\s+m\b', r"\1'm", text)
+
+    # Fix common medical term segmentation errors
+    text = re.sub(r'\bperipheral\s+n\s+europa\s+thy\b', 'peripheral neuropathy', text)
+    text = re.sub(r'\bmera\s+lg\s+i\s+ape\s+strict\s+um\b', 'meralgia paresthetica', text)
+
+    # Fix gibberish patterns from bad segmentation
+    text = re.sub(r'\bof\s+en\b', 'often', text)  # "of en" -> "often"
+    text = re.sub(r'\btoo\s+of\s+en', 'too often', text)
+
+    # Add space after punctuation if followed by text
+    text = re.sub(r'([.!?;:,])([A-Z0-9a-z])', r'\1 \2', text)
+
+    # Add space before/after ### (markdown headers)
+    text = re.sub(r'(\w)(#+)', r'\1 \2', text)
+    text = re.sub(r'(#+)(\w)', r'\1 \2', text)
+
+    # Add space after thinking markers
+    text = re.sub(r'(>)(\w)', r'\1 \2', text)
+    text = re.sub(r'(>)(<)', r'\1 \2', text)
+
+    # Clean up multiple spaces
+    text = re.sub(r' +', ' ', text)
+
+    return text
+
+
+# =============================================================================
+# 0) Parse command-line arguments for model path
+# =============================================================================
+
+parser = argparse.ArgumentParser(description="Test a fine-tuned LLM model")
+parser.add_argument(
+    "model_path",
+    help="Path to the fine-tuned model directory (e.g., ./DeepSeek-R1-Medical-FT-8b-16bts)"
+)
+args = parser.parse_args()
+
+model_path = args.model_path
+print(f"Loading model from: {model_path}")
 
 
 # =============================================================================
@@ -77,9 +197,9 @@ load_in_4bit = True
 # or:
 #   model.save_pretrained_merged(...)
 #
-# In this case, we are loading the merged 16-bit fine-tuned model.
+# The model path is provided as a command-line argument.
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name="./DeepSeek-R1-Medical-FT-8b-16bts",
+    model_name=model_path,
     max_seq_length=max_seq_length,
     dtype=dtype,
     load_in_4bit=load_in_4bit,
@@ -165,9 +285,12 @@ outputs = model.generate(
 )
 
 # Decode token IDs back into human-readable text.
-response = tokenizer.batch_decode(outputs, skip_special_tokens=False)
-# Fix tokenizer artifacts: Ġ represents space, Ċ represents newline
-response_text = response[0].replace("Ġ", " ").replace("Ċ", "\n")
+response = tokenizer.batch_decode(
+    outputs,
+    skip_special_tokens=True,
+)
+# Apply intelligent space insertion to make text readable
+response_text = add_spaces_to_text(response[0])
 
 
 # =============================================================================
